@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="description" content="Plan your Dovetrek adventure with optimal route finding">
+    <meta name="theme-color" content="#2d5016">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>DoveTrek Route Planner</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+    <link rel="apple-touch-icon" href="icons/icon-192.png">
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="header-content">
+                <span class="compass-icon">&#129517;</span>
+                <h1>DoveTrek</h1>
+            </div>
+            <p class="tagline">Plan your adventure</p>
+        </header>
+
+        <!-- Config Screen -->
+        <main id="config-screen" class="screen active">
+            <section class="card">
+                <h2>Competition Settings</h2>
+                <div class="form-group">
+                    <label for="year-select">Competition Year</label>
+                    <select id="year-select" class="input-field">
+                        <option value="">Loading years...</option>
+                    </select>
+                </div>
+                <div id="data-status" class="status-badge">
+                    <span class="status-icon">&#8987;</span>
+                    <span class="status-text">Select a year to load data</span>
+                </div>
+            </section>
+
+            <section class="card">
+                <h2>Route Parameters</h2>
+                <div class="form-group">
+                    <label for="speed-slider">Walking Speed: <span id="speed-value">5.0</span> km/h</label>
+                    <input type="range" id="speed-slider" min="3.0" max="7.0" step="0.1" value="5.0" class="slider">
+                </div>
+                <div class="form-group">
+                    <label for="dwell-input">Dwell Time (minutes)</label>
+                    <input type="number" id="dwell-input" min="0" max="30" value="7" class="input-field">
+                </div>
+            </section>
+
+            <section class="card">
+                <h2>Include Checkpoints</h2>
+                <div id="checkpoint-grid" class="checkpoint-grid">
+                    <p class="muted">Load data to see checkpoints</p>
+                </div>
+                <div class="checkbox-actions">
+                    <button id="select-all-btn" class="btn-link">Select All</button>
+                    <button id="select-none-btn" class="btn-link">Select None</button>
+                </div>
+            </section>
+
+            <section class="card actions-card">
+                <button id="solve-btn" class="btn btn-primary" disabled>
+                    <span class="btn-icon">&#128270;</span>
+                    Find Best Route
+                </button>
+                <button id="min-speed-btn" class="btn btn-secondary" disabled>
+                    <span class="btn-icon">&#9201;</span>
+                    Find Min Speed for All CPs
+                </button>
+            </section>
+
+            <div id="loading-overlay" class="loading-overlay hidden">
+                <div class="loading-spinner"></div>
+                <p class="loading-text">Calculating optimal route...</p>
+            </div>
+        </main>
+
+        <!-- Results Screen -->
+        <main id="results-screen" class="screen">
+            <section class="card summary-card">
+                <h2>Route Summary</h2>
+                <div class="summary-grid">
+                    <div class="summary-item">
+                        <span class="summary-label">Checkpoints</span>
+                        <span id="result-checkpoints" class="summary-value">-</span>
+                    </div>
+                    <div class="summary-item">
+                        <span class="summary-label">Speed</span>
+                        <span id="result-speed" class="summary-value">-</span>
+                    </div>
+                    <div class="summary-item">
+                        <span class="summary-label">Distance</span>
+                        <span id="result-distance" class="summary-value">-</span>
+                    </div>
+                    <div class="summary-item">
+                        <span class="summary-label">Height Gain</span>
+                        <span id="result-height" class="summary-value">-</span>
+                    </div>
+                    <div class="summary-item highlight">
+                        <span class="summary-label">Finish Time</span>
+                        <span id="result-finish" class="summary-value">-</span>
+                    </div>
+                </div>
+                <div id="route-path" class="route-path">-</div>
+            </section>
+
+            <section class="card">
+                <h2>Route Card</h2>
+                <div class="table-wrapper">
+                    <table id="route-table" class="route-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>From</th>
+                                <th>To</th>
+                                <th>Dist</th>
+                                <th>Height</th>
+                                <th>Travel</th>
+                                <th>Arrive</th>
+                                <th>Depart</th>
+                            </tr>
+                        </thead>
+                        <tbody id="route-table-body">
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="card actions-card">
+                <div class="action-buttons">
+                    <button id="back-btn" class="btn btn-outline">
+                        <span class="btn-icon">&#8592;</span>
+                        Back
+                    </button>
+                    <button id="maps-btn" class="btn btn-secondary">
+                        <span class="btn-icon">&#128506;</span>
+                        Maps
+                    </button>
+                    <button id="export-btn" class="btn btn-secondary">
+                        <span class="btn-icon">&#128196;</span>
+                        Export
+                    </button>
+                    <button id="gpx-btn" class="btn btn-secondary">
+                        <span class="btn-icon">&#128230;</span>
+                        GPX
+                    </button>
+                    <button id="track-btn" class="btn btn-primary">
+                        <span class="btn-icon">&#9745;</span>
+                        Track
+                    </button>
+                </div>
+            </section>
+        </main>
+
+        <!-- Progress Tracker Screen -->
+        <main id="tracker-screen" class="screen">
+            <section class="card">
+                <h2>Progress Tracker</h2>
+                <div class="progress-summary">
+                    <div class="progress-stat">
+                        <span class="progress-label">Visited</span>
+                        <span id="visited-count" class="progress-value">0 / 0</span>
+                    </div>
+                    <div id="time-status" class="time-status">
+                        <span class="time-icon">&#9201;</span>
+                        <span id="time-diff" class="time-diff">On schedule</span>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card">
+                <div id="tracker-list" class="tracker-list">
+                </div>
+            </section>
+
+            <section class="card actions-card">
+                <div class="action-buttons">
+                    <button id="tracker-back-btn" class="btn btn-outline">
+                        <span class="btn-icon">&#8592;</span>
+                        Back to Results
+                    </button>
+                    <button id="reset-tracker-btn" class="btn btn-danger">
+                        <span class="btn-icon">&#8634;</span>
+                        Reset
+                    </button>
+                </div>
+            </section>
+        </main>
+
+        <!-- Install Prompt -->
+        <div id="install-prompt" class="install-prompt hidden">
+            <p>Add DoveTrek to your home screen for offline access</p>
+            <div class="install-actions">
+                <button id="install-btn" class="btn btn-primary btn-small">Install</button>
+                <button id="dismiss-install-btn" class="btn btn-link">Not now</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/storage.js"></script>
+    <script src="js/csv-parser.js"></script>
+    <script src="js/bng-converter.js"></script>
+    <script src="js/distance-calc.js"></script>
+    <script src="js/github-loader.js"></script>
+    <script src="js/solver.js"></script>
+    <script src="js/route-card.js"></script>
+    <script src="js/gpx-export.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
