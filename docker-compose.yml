@@ -1,6 +1,6 @@
 services:
   dovetrek:
-    build: https://github.com/liamj-f/dovetrek-pwa.git#main
+    image: dovetrek-pwa:latest
     ports:
       - "80:80"
     restart: unless-stopped
