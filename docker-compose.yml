@@ -1,6 +1,7 @@
 services:
   dovetrek:
     image: dovetrek-pwa:latest
+    pull_policy: never
     ports:
       - "80:80"
     restart: unless-stopped
