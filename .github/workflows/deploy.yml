@@ -1,45 +1,46 @@
-name: Build & Deploy
+name: Build & Publish
 
 on:
   push:
     branches:
       - main
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
-  deploy:
-    name: Build image and deploy to ljfcloud-server
+  build-and-push:
+    name: Build and push image to ghcr.io
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build Docker image
-        run: docker build -t dovetrek-pwa:latest .
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Save image as tar
-        run: docker save dovetrek-pwa:latest | gzip > dovetrek-pwa.tar.gz
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest
 
-      - name: Set up SSH key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.LJFCLOUD_SSH_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H "${{ secrets.LJFCLOUD_HOST }}" >> ~/.ssh/known_hosts
-
-      - name: Transfer files to server
-        run: |
-          scp -i ~/.ssh/id_rsa \
-            dovetrek-pwa.tar.gz \
-            docker-compose.yml \
-            ${{ secrets.LJFCLOUD_USER }}@${{ secrets.LJFCLOUD_HOST }}:~/dovetrek-pwa/
-
-      - name: Load image on server
-        run: |
-          ssh -i ~/.ssh/id_rsa \
-            ${{ secrets.LJFCLOUD_USER }}@${{ secrets.LJFCLOUD_HOST }} \
-            "docker load < ~/dovetrek-pwa/dovetrek-pwa.tar.gz && rm ~/dovetrek-pwa/dovetrek-pwa.tar.gz"
-
-      - name: Trigger Portainer webhook
-        run: |
-          curl -s -X POST "${{ secrets.PORTAINER_WEBHOOK_URL }}"
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
