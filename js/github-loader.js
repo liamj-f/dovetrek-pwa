@@ -11,184 +11,78 @@ const GitHubLoader = (function() {
     const FILESTORE_BRANCH = 'FileStore';
 
     const RAW_BASE = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}`;
-
-    // Known years with data
-    const KNOWN_YEARS = [2017, 2018, 2019, 2024, 2025];
-
-    // Distance data sources (in order of preference)
-    const DISTANCE_SOURCES = ['Bing Maps', 'Google Maps', 'Azure Maps & OpenTopoData'];
-
-    // Known distance files with exact dates
-    const KNOWN_DISTANCE_FILES = {
-        2025: [
-            { source: 'Bing Maps', date: '2025-02-25' },
-            { source: 'Google Maps', date: '2025-03-02' },
-            { source: 'Azure Maps & OpenTopoData', date: '2025-02-23' }
-        ]
-    };
+    const API_BASE = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}`;
 
     /**
-     * Fetch available years from repository
-     * Falls back to known years if API call fails
+     * List CSV files available in a GitHub directory via the Contents API
+     * @param {string} path - Directory path in the repo
+     * @param {string} branch - Branch name
+     * @returns {Promise<Array<{name, download_url}>>} File entries
      */
-    async function fetchAvailableYears() {
-        // Return known years (GitHub API rate limiting makes directory listing unreliable)
-        // Could enhance this later with API call to list CheckpointData directory
-        return KNOWN_YEARS.slice().sort((a, b) => b - a); // Descending order
+    async function listFiles(path, branch) {
+        const url = `${API_BASE}/contents/${path}?ref=${branch}`;
+        console.log(`[GitHubLoader] Listing files: ${url}`);
+
+        const response = await fetch(url, {
+            headers: { Accept: 'application/vnd.github.v3+json' }
+        });
+
+        if (!response.ok) {
+            throw new Error(`GitHub API error ${response.status} listing ${path} on ${branch}`);
+        }
+
+        const entries = await response.json();
+        return entries
+            .filter(e => e.type === 'file' && e.name.endsWith('.csv'))
+            .map(e => ({ name: e.name, download_url: e.download_url }));
     }
 
     /**
-     * Fetch openings CSV for a given year
-     * @param {number} year - Competition year
-     * @returns {Promise<string>} Raw CSV content
+     * List available openings CSV files from the FileStore branch (Openings/ folder)
+     * Falls back to the main branch CheckpointData/ folder.
+     * @returns {Promise<Array<{name, download_url}>>}
      */
-    async function fetchOpenings(year) {
-        // Try cache first
-        const cached = await Storage.getOpenings(year);
-        if (cached) {
-            console.log(`[GitHubLoader] Using cached openings for ${year}`);
-            return cached;
+    async function listOpeningsFiles() {
+        try {
+            const files = await listFiles('Openings', FILESTORE_BRANCH);
+            if (files.length > 0) return files;
+        } catch (e) {
+            console.log('[GitHubLoader] Openings/ not found on FileStore, trying main branch:', e.message);
         }
+        return listFiles('CheckpointData', MAIN_BRANCH);
+    }
 
-        // Fetch from GitHub
-        const url = `${RAW_BASE}/${MAIN_BRANCH}/CheckpointData/Openings_${year}.csv`;
-        console.log(`[GitHubLoader] Fetching openings: ${url}`);
+    /**
+     * List available distances CSV files from the FileStore branch (DataFrames/ folder).
+     * @returns {Promise<Array<{name, download_url}>>}
+     */
+    async function listDistancesFiles() {
+        return listFiles('DataFrames', FILESTORE_BRANCH);
+    }
 
+    /**
+     * Fetch raw CSV content from a URL (with IndexedDB cache keyed by URL).
+     * @param {string} url - download URL
+     * @param {string} cacheKey - key used in IndexedDB
+     * @returns {Promise<string>}
+     */
+    async function fetchCSV(url, cacheKey) {
         const response = await fetch(url);
         if (!response.ok) {
-            throw new Error(`Failed to fetch openings for ${year}: ${response.status}`);
+            throw new Error(`Failed to fetch ${url}: ${response.status}`);
         }
-
-        const csvText = await response.text();
-
-        // Cache for offline use
-        await Storage.saveOpenings(year, csvText);
-
-        return csvText;
+        return response.text();
     }
 
     /**
-     * Fetch distances CSV for a given year
-     * Tries multiple sources and finds most recent file
-     * @param {number} year - Competition year
-     * @returns {Promise<string>} Raw CSV content
+     * Load data from explicitly chosen file URLs (openings + distances).
+     * @param {string} openingsUrl - raw download URL for the openings CSV
+     * @param {string|null} distancesUrl - raw download URL for the distances CSV (or null)
+     * @returns {Promise<Object>}
      */
-    async function fetchDistances(year) {
-        // Try cache first
-        const cached = await Storage.getDistances(year);
-        if (cached) {
-            console.log(`[GitHubLoader] Using cached distances for ${year}`);
-            return cached;
-        }
-
-        // Try to fetch from FileStore branch
-        // File naming pattern: Distances_DF_{year}_{source}_{date}.csv
-
-        for (const source of DISTANCE_SOURCES) {
-            try {
-                // List files would require GitHub API, so we'll try known patterns
-                // For now, try to fetch with a recent date pattern
-                const attempts = await tryFetchDistanceFile(year, source);
-                if (attempts) {
-                    await Storage.saveDistances(year, source, attempts);
-                    return attempts;
-                }
-            } catch (e) {
-                console.log(`[GitHubLoader] Failed to fetch ${source} distances:`, e.message);
-            }
-        }
-
-        // If all else fails, return null (will use calculated distances)
-        console.log(`[GitHubLoader] No distance data found for ${year}`);
-        return null;
-    }
-
-    /**
-     * Try to fetch distance file with various date patterns
-     */
-    async function tryFetchDistanceFile(year, source) {
-        // First, try known exact files
-        const knownFiles = KNOWN_DISTANCE_FILES[year] || [];
-        const knownFile = knownFiles.find(f => f.source === source);
-
-        if (knownFile) {
-            const filename = `Distances_DF_${year}_${source}_${knownFile.date}.csv`;
-            const url = `${RAW_BASE}/${FILESTORE_BRANCH}/DataFrames/${encodeURIComponent(filename)}`;
-
-            try {
-                const response = await fetch(url);
-                if (response.ok) {
-                    console.log(`[GitHubLoader] Found known distance file: ${filename}`);
-                    return await response.text();
-                }
-            } catch (e) {
-                console.log(`[GitHubLoader] Known file not found: ${filename}`);
-            }
-        }
-
-        // Try recent dates as fallback
-        const dates = generateRecentDates();
-
-        for (const date of dates) {
-            const filename = `Distances_DF_${year}_${source}_${date}.csv`;
-            const url = `${RAW_BASE}/${FILESTORE_BRANCH}/DataFrames/${encodeURIComponent(filename)}`;
-
-            try {
-                const response = await fetch(url);
-                if (response.ok) {
-                    console.log(`[GitHubLoader] Found distance file: ${filename}`);
-                    return await response.text();
-                }
-            } catch (e) {
-                // Continue to next date
-            }
-        }
-
-        // Also try without date suffix
-        const baseFilename = `Distances_DF_${year}_${source}.csv`;
-        const baseUrl = `${RAW_BASE}/${FILESTORE_BRANCH}/DataFrames/${encodeURIComponent(baseFilename)}`;
-
-        try {
-            const response = await fetch(baseUrl);
-            if (response.ok) {
-                return await response.text();
-            }
-        } catch (e) {
-            // Fall through
-        }
-
-        return null;
-    }
-
-    /**
-     * Generate recent date strings for file matching
-     */
-    function generateRecentDates() {
-        const dates = [];
-        const now = new Date();
-
-        // Generate dates for past 2 years, various months
-        for (let year = now.getFullYear(); year >= now.getFullYear() - 1; year--) {
-            for (let month = 12; month >= 1; month--) {
-                for (let day = 28; day >= 1; day -= 7) {
-                    const m = month.toString().padStart(2, '0');
-                    const d = day.toString().padStart(2, '0');
-                    dates.push(`${year}-${m}-${d}`);
-                }
-            }
-        }
-
-        return dates.slice(0, 50); // Limit attempts
-    }
-
-    /**
-     * Load all data for a year (openings + distances)
-     * @param {number} year - Competition year
-     * @returns {Promise<Object>} {openings, distances, checkpoints}
-     */
-    async function loadYear(year) {
-        // Fetch openings
-        const openingsCSV = await fetchOpenings(year);
+    async function loadFromUrls(openingsUrl, distancesUrl) {
+        console.log(`[GitHubLoader] Loading openings from: ${openingsUrl}`);
+        const openingsCSV = await fetchCSV(openingsUrl, openingsUrl);
         const openingsData = CSVParser.parseOpenings(openingsCSV);
 
         // Convert BNG to coordinates
@@ -198,17 +92,28 @@ const GitHubLoader = (function() {
             }
         }
 
-        // Fetch distances (may be null)
-        const distancesCSV = await fetchDistances(year);
         let distanceMap = null;
+        let distanceSource = 'Calculated';
 
-        if (distancesCSV) {
-            distanceMap = CSVParser.parseDistances(distancesCSV);
-        } else {
-            // Calculate distances as fallback
-            console.log(`[GitHubLoader] Calculating distances from coordinates`);
+        if (distancesUrl) {
+            console.log(`[GitHubLoader] Loading distances from: ${distancesUrl}`);
+            try {
+                const distancesCSV = await fetchCSV(distancesUrl, distancesUrl);
+                distanceMap = CSVParser.parseDistances(distancesCSV);
+                distanceSource = 'GitHub';
+            } catch (e) {
+                console.warn('[GitHubLoader] Failed to load distances, falling back to calculated:', e.message);
+            }
+        }
+
+        if (!distanceMap) {
+            console.log('[GitHubLoader] Calculating distances from coordinates');
             distanceMap = DistanceCalc.calculateDistances(openingsData.checkpoints);
         }
+
+        // Derive year from the openings filename if possible (e.g. Openings_2025.csv)
+        const yearMatch = openingsUrl.match(/(\d{4})/);
+        const year = yearMatch ? parseInt(yearMatch[1], 10) : null;
 
         return {
             year,
@@ -216,8 +121,18 @@ const GitHubLoader = (function() {
             startTime: openingsData.startTime,
             finishWindow: openingsData.finishWindow,
             distances: distanceMap,
-            distanceSource: distancesCSV ? 'GitHub' : 'Calculated'
+            distanceSource
         };
+    }
+
+    /**
+     * Load all data for a year (openings + distances) — kept for backwards compatibility.
+     * @param {number} year - Competition year
+     * @returns {Promise<Object>}
+     */
+    async function loadYear(year) {
+        const openingsUrl = `${RAW_BASE}/${MAIN_BRANCH}/CheckpointData/Openings_${year}.csv`;
+        return loadFromUrls(openingsUrl, null);
     }
 
     /**
@@ -245,12 +160,11 @@ const GitHubLoader = (function() {
 
     // Public API
     return {
-        fetchAvailableYears,
-        fetchOpenings,
-        fetchDistances,
+        listOpeningsFiles,
+        listDistancesFiles,
+        loadFromUrls,
         loadYear,
         clearCache,
-        hasDataForYear,
-        KNOWN_YEARS
+        hasDataForYear
     };
 })();
