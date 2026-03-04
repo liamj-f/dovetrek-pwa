@@ -1,0 +1,45 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Build image and deploy to ljfcloud-server
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t dovetrek-pwa:latest .
+
+      - name: Save image as tar
+        run: docker save dovetrek-pwa:latest | gzip > dovetrek-pwa.tar.gz
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.LJFCLOUD_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "${{ secrets.LJFCLOUD_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Transfer files to server
+        run: |
+          scp -i ~/.ssh/id_rsa \
+            dovetrek-pwa.tar.gz \
+            docker-compose.yml \
+            ${{ secrets.LJFCLOUD_USER }}@${{ secrets.LJFCLOUD_HOST }}:~/dovetrek-pwa/
+
+      - name: Load image on server
+        run: |
+          ssh -i ~/.ssh/id_rsa \
+            ${{ secrets.LJFCLOUD_USER }}@${{ secrets.LJFCLOUD_HOST }} \
+            "docker load < ~/dovetrek-pwa/dovetrek-pwa.tar.gz && rm ~/dovetrek-pwa/dovetrek-pwa.tar.gz"
+
+      - name: Trigger Portainer webhook
+        run: |
+          curl -s -X POST "${{ secrets.PORTAINER_WEBHOOK_URL }}"
