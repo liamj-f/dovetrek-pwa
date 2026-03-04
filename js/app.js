@@ -29,8 +29,8 @@ const App = (function() {
         // Load preferences
         loadPreferences();
 
-        // Load available years
-        loadYears();
+        // Load available files from FileStore branch
+        loadFiles();
 
         // Check for PWA install prompt
         setupInstallPrompt();
@@ -43,7 +43,8 @@ const App = (function() {
         elements.trackerScreen = document.getElementById('tracker-screen');
 
         // Config screen
-        elements.yearSelect = document.getElementById('year-select');
+        elements.openingsSelect = document.getElementById('openings-select');
+        elements.distancesSelect = document.getElementById('distances-select');
         elements.dataStatus = document.getElementById('data-status');
         elements.speedSlider = document.getElementById('speed-slider');
         elements.speedValue = document.getElementById('speed-value');
@@ -84,8 +85,9 @@ const App = (function() {
     }
 
     function setupEventListeners() {
-        // Year selection
-        elements.yearSelect.addEventListener('change', handleYearChange);
+        // File selection
+        elements.openingsSelect.addEventListener('change', handleFileSelection);
+        elements.distancesSelect.addEventListener('change', handleFileSelection);
 
         // Speed slider
         elements.speedSlider.addEventListener('input', handleSpeedChange);
@@ -171,65 +173,83 @@ const App = (function() {
         Storage.savePreference('installDismissed', true);
     }
 
-    // ===== Year Loading =====
+    // ===== File Loading =====
 
-    async function loadYears() {
+    async function loadFiles() {
+        // Populate openings selector
         try {
-            const years = await GitHubLoader.fetchAvailableYears();
-
-            elements.yearSelect.innerHTML = '<option value="">Select year...</option>';
-
-            for (const year of years) {
-                const option = document.createElement('option');
-                option.value = year;
-                option.textContent = year;
-                elements.yearSelect.appendChild(option);
-            }
-
-            // Restore last selected year
-            const lastYear = Storage.getPreference('lastYear');
-            if (lastYear && years.includes(lastYear)) {
-                elements.yearSelect.value = lastYear;
-                await loadYearData(lastYear);
+            const openingsFiles = await GitHubLoader.listOpeningsFiles();
+            elements.openingsSelect.innerHTML = '<option value="">Select openings file...</option>';
+            for (const f of openingsFiles) {
+                const opt = document.createElement('option');
+                opt.value = f.download_url;
+                opt.textContent = f.name;
+                elements.openingsSelect.appendChild(opt);
             }
         } catch (err) {
-            console.error('[App] Failed to load years:', err);
-            updateDataStatus('error', 'Failed to load years');
+            console.error('[App] Failed to list openings files:', err);
+            elements.openingsSelect.innerHTML = '<option value="">Failed to load file list</option>';
+            updateDataStatus('error', 'Could not list openings files');
+        }
+
+        // Populate distances selector
+        try {
+            const distancesFiles = await GitHubLoader.listDistancesFiles();
+            elements.distancesSelect.innerHTML = '<option value="">(None – use calculated distances)</option>';
+            for (const f of distancesFiles) {
+                const opt = document.createElement('option');
+                opt.value = f.download_url;
+                opt.textContent = f.name;
+                elements.distancesSelect.appendChild(opt);
+            }
+        } catch (err) {
+            console.error('[App] Failed to list distances files:', err);
+            elements.distancesSelect.innerHTML = '<option value="">(None – use calculated distances)</option>';
+        }
+
+        // Restore last selections
+        const lastOpenings = Storage.getPreference('lastOpeningsUrl');
+        const lastDistances = Storage.getPreference('lastDistancesUrl');
+        if (lastOpenings) elements.openingsSelect.value = lastOpenings;
+        if (lastDistances) elements.distancesSelect.value = lastDistances;
+
+        // Auto-load if a valid openings file is already selected
+        if (elements.openingsSelect.value) {
+            await handleFileSelection();
         }
     }
 
-    async function handleYearChange() {
-        const year = parseInt(elements.yearSelect.value, 10);
-        if (!year) {
+    async function handleFileSelection() {
+        const openingsUrl = elements.openingsSelect.value;
+        if (!openingsUrl) {
             yearData = null;
-            updateDataStatus('pending', 'Select a year to load data');
+            updateDataStatus('pending', 'Select files to load data');
             renderCheckpoints();
             updateSolveButtons();
             return;
         }
 
-        await loadYearData(year);
-        Storage.savePreference('lastYear', year);
-    }
+        const distancesUrl = elements.distancesSelect.value || null;
 
-    async function loadYearData(year) {
-        currentYear = year;
+        Storage.savePreference('lastOpeningsUrl', openingsUrl);
+        Storage.savePreference('lastDistancesUrl', distancesUrl || '');
+
         updateDataStatus('loading', 'Loading data...');
 
         try {
-            yearData = await GitHubLoader.loadYear(year);
+            yearData = await GitHubLoader.loadFromUrls(openingsUrl, distancesUrl);
+            currentYear = yearData.year;
 
             const cpCount = yearData.checkpoints.size - 2; // Exclude start/finish
-            updateDataStatus('success', `Data loaded: ${cpCount} checkpoints`);
+            updateDataStatus('success', `Data loaded: ${cpCount} checkpoints (distances: ${yearData.distanceSource})`);
 
             renderCheckpoints();
             updateSolveButtons();
 
-            // Restore excluded checkpoints
-            restoreExcludedCheckpoints();
+            if (currentYear) restoreExcludedCheckpoints();
 
         } catch (err) {
-            console.error('[App] Failed to load year data:', err);
+            console.error('[App] Failed to load data:', err);
             yearData = null;
             updateDataStatus('error', `Failed to load data: ${err.message}`);
             renderCheckpoints();
