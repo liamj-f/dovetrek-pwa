@@ -23,9 +23,18 @@ const GitHubLoader = (function() {
         const url = `${API_BASE}/contents/${path}?ref=${branch}`;
         console.log(`[GitHubLoader] Listing files: ${url}`);
 
-        const response = await fetch(url, {
-            headers: { Accept: 'application/vnd.github.v3+json' }
-        });
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+        let response;
+        try {
+            response = await fetch(url, {
+                headers: { Accept: 'application/vnd.github.v3+json' },
+                signal: controller.signal
+            });
+        } finally {
+            clearTimeout(timeoutId);
+        }
 
         if (!response.ok) {
             throw new Error(`GitHub API error ${response.status} listing ${path} on ${branch}`);

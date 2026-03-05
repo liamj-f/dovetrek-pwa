@@ -1,5 +1,5 @@
 // DoveTrek Service Worker
-const CACHE_NAME = 'dovetrek-v1';
+const CACHE_NAME = 'dovetrek-v2';
 const STATIC_ASSETS = [
     '/',
     '/index.html',
@@ -52,6 +52,12 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
     const { request } = event;
     const url = new URL(request.url);
+
+    // Pass GitHub API requests straight through — never cache them
+    if (url.hostname === 'api.github.com') {
+        event.respondWith(fetch(request));
+        return;
+    }
 
     // Handle GitHub raw content requests (data files)
     if (url.hostname === 'raw.githubusercontent.com') {
